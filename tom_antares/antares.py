@@ -4,7 +4,7 @@ import requests
 import antares_client
 from antares_client.search import get_by_ztf_object_id
 from astropy.time import Time, TimezoneInfo
-from crispy_forms.layout import Fieldset, Layout
+from crispy_forms.layout import Div, Fieldset, Layout, HTML
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -68,7 +68,72 @@ def get_tag_choices():
 
 
 class ANTARESBrokerForm(GenericQueryForm):
-    tag = forms.MultipleChoiceField(choices=get_tag_choices)
+    #define form content
+    ztfid = forms.CharField(
+        required=False,
+        label='',
+        widget=forms.TextInput(attrs={'placeholder': 'ZTF object id, e.g. ZTF19aapreis'})
+        )
+    tag = forms.MultipleChoiceField(required=False,choices=get_tag_choices)
+    nobs__gt = forms.IntegerField(
+        required=False,
+        label='Detections Lower',
+        widget=forms.TextInput(attrs={'placeholder': 'Min number of measurements'})
+    )
+    nobs__lt = forms.IntegerField(
+        required=False,
+        label='Detections Upper',
+        widget=forms.TextInput(attrs={'placeholder': 'Max number of measurements'})
+    )
+    ra = forms.FloatField(
+        required=False,
+        label='RA',
+        widget=forms.TextInput(attrs={'placeholder': 'RA (Degrees)'}),
+        min_value=0.0
+    )
+    dec = forms.FloatField(
+        required=False,
+        label='Dec',
+        widget=forms.TextInput(attrs={'placeholder': 'Dec (Degrees)'}),
+        min_value=0.0
+    )
+    sr = forms.FloatField(
+        required=False,
+        label='Search Radius',
+        widget=forms.TextInput(attrs={'placeholder': 'radius (Degrees)'}),
+        min_value=0.0
+    )
+    mjd__gt = forms.FloatField(
+        required=False,
+        label='Min date of alert detection ',
+        widget=forms.TextInput(attrs={'placeholder': 'Date (MJD)'}),
+        min_value=0.0
+    )
+    mjd__lt = forms.FloatField(
+        required=False,
+        label='Max date of alert detection',
+        widget=forms.TextInput(attrs={'placeholder': 'Date (MJD)'}),
+        min_value=0.0
+    )
+    mag__min = forms.FloatField(
+        required=False,
+        label='Min magnitude of the latest alert',
+        widget=forms.TextInput(attrs={'placeholder': 'Min Magnitude'}),
+        min_value=0.0
+    )
+    mag__max = forms.FloatField(
+        required=False,
+        label='Max magnitude of the latest alert',
+        widget=forms.TextInput(attrs={'placeholder': 'Max Magnitude'}),
+        min_value=0.0
+    )
+    esquery = forms.JSONField(
+        required=False,
+        label='Elastic Search query in JSON format',
+        widget=forms.TextInput(attrs={'placeholder': '{"query":{}}'}),
+    )
+
+
     # cone_search = ConeSearchField()
     # api_search_tags = forms.MultipleChoiceField(choices=get_tag_choices)
 
@@ -79,22 +144,141 @@ class ANTARESBrokerForm(GenericQueryForm):
         super().__init__(*args, **kwargs)
         self.helper.layout = Layout(
             self.common_layout,
+            HTML('''
+                <p>
+                Users can query objects in the ANTARES database using one of the following 
+                three methods: 1. an object ID by ZTF, 2. a simple query form with constraints
+                of object brightness, position, and associated tag, 3. an advanced query with
+                Elastic Search syntax.
+            </p>
+            '''),
+            HTML('<hr/>'),
+            HTML('<p style="color:blue;font-size:30px">Query by object name</p>'),
+            Fieldset(
+                 'ZTF object ID',
+                 'ztfid'
+            ),
+            HTML('<hr/>'),
+            HTML('<p style="color:blue;font-size:30px">Simple query form</p>'),
+            Fieldset(
+                'Alert timing',
+                Div(
+                    Div(
+                        'mjd__gt',
+                        css_class='col',
+                    ),
+                    Div(
+                        'mjd__lt',
+                        css_class='col',
+                    ),
+                    css_class='form-row'
+                    )
+                ),
+            Fieldset(
+                'Number of measurements',
+                Div(
+                    Div(
+                        'nobs__gt',
+                        css_class='col',
+                    ),
+                    Div(
+                        'nobs__lt',
+                        css_class='col',
+                    ),
+                    css_class='form-row',
+                )
+            ),
+            Fieldset(
+                'Brightness of the latest alert',
+                Div(
+                    Div(
+                        'mag__min',
+                        css_class='col',
+                    ),
+                    Div(
+                        'mag__max',
+                        css_class='col',
+                    ),
+                  css_class='form-row'
+               )
+            ),
+            Fieldset(
+                'Cone Search',
+                Div(
+                    Div(
+                        'ra',
+                        css_class='col'
+                    ),
+                    Div(
+                        'dec',
+                        css_class='col'
+                    ),
+                    Div(
+                        'sr',
+                        css_class='col'
+                    ),
+                    css_class='form-row'
+                )
+            ),
             Fieldset(
                 'View Tags',
                 'tag'
             ),
-            # HTML('<hr/>'),
-            # Fieldset(
-            #     'Cone Search',
-            #     'cone_search'
-            # ),
+            HTML('<hr/>'),
+            HTML('<p style="color:blue;font-size:30px">Advanced query</p>'),
+            Fieldset(
+                 '',
+                 'esquery'
+            ),
+            HTML('''
+                <p>
+                Please see <a href="https://noao.gitlab.io/antares/client/tutorial/searching.html">ANTARES Documentation</a>
+                for a detailed description of advanced searches.
+                </p>
+            ''')
             # HTML('<hr/>'),
             # Fieldset(
             #     'API Search',
             #     'api_search_tags'
             # )
         )
+            
+    def clean(self):
+        cleaned_data = super().clean()
 
+        # Ensure all cone search fields are present
+        if any(cleaned_data[k] for k in ['ra', 'dec', 'sr']) and not all(cleaned_data[k] for k in ['ra', 'dec', 'sr']):
+            raise forms.ValidationError('All of RA, Dec, and Search Radius must be included to perform a cone search.')
+        #default value for cone search
+        if not all(cleaned_data[k] for k in ['ra', 'dec', 'sr']):
+            cleaned_data['ra'] = 180.
+            cleaned_data['dec'] = 0.
+            cleaned_data['sr'] = 180.
+        
+        # Ensure alert timing constraints have sensible values
+        if all(cleaned_data[k] for k in ['mjd__lt', 'mjd__gt']) and cleaned_data['mjd__lt'] <= cleaned_data['mjd__gt']:
+            raise forms.ValidationError('Min date of alert detection must be earlier than max date of alert detection.')
+
+        # Ensure number of measurement constraints have sensible values
+        if all(cleaned_data[k] for k in ['nobs__lt', 'nobs__gt']) and cleaned_data['nobs__lt'] <= cleaned_data['nobs__gt']:
+            raise forms.ValidationError('Min number of measurements must be smaller than max number of measurements.')
+
+        # Ensure magnitude constraints have sensible values
+        if all(cleaned_data[k] for k in ['mag__min', 'mag__max']) and cleaned_data['mag__max'] <= cleaned_data['mag__min']:
+            raise forms.ValidationError('Min magnitude must be smaller than max magnitude.')
+
+#        # Ensure using either a stream or the advanced search form
+#        if not (cleaned_data['tag'] or cleaned_data['esquery']):
+#            raise forms.ValidationError('Please either select tag(s) or use the advanced search query.')
+
+        # Ensure using either a stream or the advanced search form
+        if not (cleaned_data['ztfid'] or cleaned_data['tag'] or cleaned_data['esquery']):
+            raise forms.ValidationError('Please either enter the ZTF ID, or select tag(s), or use the advanced search query.')
+
+        
+        return cleaned_data
+
+        
 
 class ANTARESBroker(GenericBroker):
     name = 'ANTARES'
@@ -125,18 +309,96 @@ class ANTARESBroker(GenericBroker):
 
     def fetch_alerts(self, parameters: dict) -> iter:
         tags = parameters['tag']
-        query = {
-            "query": {
-                "bool": {
-                    "filter": {
-                        "terms": {
-                            "tags": tags,
-                        }
+        nobs_gt = parameters['nobs__gt']
+        nobs_lt = parameters['nobs__lt']
+        sra = parameters['ra']
+        sdec = parameters['dec']
+        ssr = parameters['sr']
+        mjd_gt = parameters['mjd__gt']
+        mjd_lt = parameters['mjd__lt']
+        mag_min = parameters['mag__min']
+        mag_max = parameters['mag__max']
+        elsquery = parameters['esquery']
+        ztfid = parameters['ztfid']
+        if ztfid:
+            query = {
+                "query":{
+                    "bool":{
+                        "must":[
+                            {
+                                "match":{
+                                    "properties.ztf_object_id": ztfid
+                                }
+                            }
+                        ]
                     }
                 }
             }
-        }
+        elif elsquery:
+            query = elsquery
+        else:
+            query = {
+                "query": {
+                    "bool": {
+                        "filter":[
+                            {
+                                "range": {
+                                    "properties.num_mag_values": {
+                                        "gte": nobs_gt,
+                                        "lte": nobs_lt,
+                                    }
+                                }
+                            },
+                            {
+                                "range": {
+                                    "properties.newest_alert_observation_time": {
+                                        "lte": mjd_lt,
+                                    }
+                                }
+                            },
+                            {
+                                "range": {
+                                    "properties.oldest_alert_observation_time": {
+                                        "gte": mjd_gt,
+                                    }
+                                }
+                            },
+                            {
+                                "range": {
+                                    "properties.newest_alert_magnitude": {
+                                        "gte": mag_min,
+                                        "lte": mag_max,
+                                    }
+                                }
+                            },
+                            {
+                                "range": {
+                                    "ra": {
+                                        "gte": sra-ssr,
+                                        "lte": sra+ssr,
+                                    }
+                                }
+                            },
+                            {
+                                "range": {
+                                    "dec": {
+                                        "gte": sdec-ssr,
+                                        "lte": sdec+ssr,
+                                    }
+                                }
+                            },
+                            {
+                                "terms": {
+                                    "tags": tags
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
         loci = antares_client.search.search(query)
+#        if ztfid:
+#            loci = get_by_ztf_object_id(ztfid)
         alerts = []
         while len(alerts) < 20:
             try:
